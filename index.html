@@ -88,7 +88,7 @@ body {
 }
 
 /* Inputs */
-.input-group { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.input-group { display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
 .input-label {
   width:32px; height:32px; border-radius:8px;
   display:flex; align-items:center; justify-content:center;
@@ -121,7 +121,7 @@ body {
 .btn-remove:hover { background: rgba(239,68,68,0.3); }
 
 /* Autocomplete */
-.autocomplete-wrapper { position:relative; flex:1; }
+.autocomplete-wrapper { position:relative; flex:1; min-width:0; }
 .autocomplete-list {
   position:absolute; top:100%; left:0; right:0; z-index:100;
   background:var(--bg-card); border:1px solid var(--border);
@@ -138,7 +138,7 @@ body {
 .autocomplete-item:hover { background:var(--bg-card-hover); }
 .autocomplete-item .ac-name { color:var(--text-primary); font-weight:500; }
 .autocomplete-item .ac-addr { color:var(--text-muted); font-size:12px; margin-left:8px; }
-.autocomplete-item .ac-district { color:var(--accent-light); font-size:11px; }
+.autocomplete-item .ac-district { color:var(--accent-light); font-size:11px; margin-left:6px; }
 
 /* City selector */
 .city-select {
@@ -151,6 +151,19 @@ body {
   padding-right:32px;
 }
 .city-select:focus { border-color:var(--border-focus); }
+
+/* Mode selector per location */
+.mode-select {
+  padding:7px 10px; background:var(--bg-input); border:1px solid var(--border);
+  border-radius:var(--radius-xs); color:var(--text-secondary); font-size:12px;
+  outline:none; cursor:pointer; min-width:98px;
+  appearance:none; -webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%238888a0' d='M5 7L1 2h8z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 8px center;
+  padding-right:22px; flex-shrink:0;
+}
+.mode-select:focus { border-color:var(--border-focus); }
+.mode-select option { background:var(--bg-card); color:var(--text-primary); }
 .city-select option { background:var(--bg-card); color:var(--text-primary); }
 
 /* Buttons */
@@ -415,7 +428,7 @@ body {
     <div id="locationList"></div>
     <div class="action-bar">
       <button class="btn btn-secondary" onclick="addLocation()">＋ 添加出发地</button>
-      <div style="flex:1"></div>
+      <div style="flex:1;"></div>
       <button class="btn btn-primary" id="computeBtn" onclick="startCompute()">📍 开始计算</button>
     </div>
   </div>
@@ -482,8 +495,9 @@ var locationCount = 0;
 // Track selected geocode results per input
 var selectedGeo = {};
 
-function addLocation(addr) {
+function addLocation(addr, modePref) {
   addr = addr || '';
+  modePref = modePref || 'auto';
   var idx = locationCount++;
   var colorClass = PERSON_COLORS[idx % PERSON_COLORS.length];
   var label = LABELS[idx];
@@ -493,7 +507,14 @@ function addLocation(addr) {
   row.id = 'loc-' + idx;
   row.innerHTML =
     '<div class="input-label person-' + colorClass + '">' + label + '</div>' +
-    '<div class="autocomplete-wrapper">' +
+    '<select class="mode-select" id="mode-' + idx + '" title="优先交通方式，选自动则择优">' +
+      '<option value="auto"' + (modePref === 'auto' ? ' selected' : '') + '>自动</option>' +
+      '<option value="walking"' + (modePref === 'walking' ? ' selected' : '') + '>步行</option>' +
+      '<option value="bicycling"' + (modePref === 'bicycling' ? ' selected' : '') + '>骑行</option>' +
+      '<option value="driving"' + (modePref === 'driving' ? ' selected' : '') + '>开车</option>' +
+      '<option value="transit"' + (modePref === 'transit' ? ' selected' : '') + '>公交</option>' +
+    '</select>' +
+    '<div class="autocomplete-wrapper" style="flex:1;min-width:0;">' +
       '<input class="input-field" id="addr-' + idx + '" value="' + (addr || '') + '" placeholder="输入地址，如：杭州市城西银泰城" autocomplete="off">' +
       '<div class="autocomplete-list" id="ac-' + idx + '"></div>' +
     '</div>' +
@@ -543,19 +564,22 @@ function getLocations() {
     var row = rows[i];
     var idx = parseInt(row.id.replace('loc-', ''));
     var input = row.querySelector('input');
+    var modeSel = document.getElementById('mode-' + idx);
+    var modePref = modeSel ? modeSel.value : 'auto';
     if (input && input.value.trim()) {
-      // Use selected geo result if available, otherwise use text
+      var loc = {
+        label: LABELS[i],
+        address: input.value.trim(),
+        mode_preference: modePref,
+        geocoded: false
+      };
       if (selectedGeo[idx]) {
-        locs.push({
-          label: LABELS[i],
-          address: selectedGeo[idx].name,
-          lng: selectedGeo[idx].lng,
-          lat: selectedGeo[idx].lat,
-          geocoded: true
-        });
-      } else {
-        locs.push({ label: LABELS[i], address: input.value.trim(), geocoded: false });
+        loc.address = selectedGeo[idx].name;
+        loc.lng = selectedGeo[idx].lng;
+        loc.lat = selectedGeo[idx].lat;
+        loc.geocoded = true;
       }
+      locs.push(loc);
     }
   }
   return locs;
@@ -576,10 +600,10 @@ function updateProgress(pct) {
 
 function showToast(msg, isError) {
   var el = document.getElementById('toast');
-  el.innerHTML = msg;
+  el.innerHTML = msg.replace(/\n/g, '<br>');
   el.className = 'toast' + (isError ? ' error' : '');
   requestAnimationFrame(function() { el.classList.add('show'); });
-  setTimeout(function() { el.classList.remove('show'); }, 3500);
+  setTimeout(function() { el.classList.remove('show'); }, 4000);
 }
 
 function sleep(ms) {
@@ -639,15 +663,17 @@ async function searchSuggestion(keywords, idx) {
         var c = tip.location.split(',');
         var item = document.createElement('div');
         item.className = 'autocomplete-item';
+        var districtText = (tip.district || '');
+        var addrText = (tip.address || '');
         item.innerHTML =
           '<span class="ac-name">' + (tip.name || '') + '</span>' +
-          '<span class="ac-district">' + (tip.adcode ? (tip.district || '') : '') + '</span>' +
-          '<span class="ac-addr">' + (tip.address || '') + '</span>';
+          '<span class="ac-district">' + districtText + '</span>' +
+          '<span class="ac-addr">' + addrText + '</span>';
         item.setAttribute('data-idx', idx);
         item.setAttribute('data-lng', c[0]);
         item.setAttribute('data-lat', c[1]);
         item.setAttribute('data-name', tip.name);
-        item.setAttribute('data-fullname', tip.district + tip.address);
+        item.setAttribute('data-fullname', districtText + addrText);
 
         item.addEventListener('click', (function(acEl, inputId, listId, geoIdx) {
           return function(e) {
@@ -677,13 +703,22 @@ async function searchSuggestion(keywords, idx) {
 }
 
 // ========== GEOCODE (fallback when user didn't select from suggestions) ==========
+// city 参数用于限定城市范围，减少同名地点歧义
 async function geocode(address, city, apiKey) {
   try {
-    var data = await amapRequest('geocode/geo', { address: address, city: city }, apiKey);
+    // 优先用 "城市+地址" 一起搜，大幅提高精确度
+    var searchAddr = city ? city + address : address;
+    var data = await amapRequest('geocode/geo', { address: searchAddr, city: city }, apiKey);
     if (data.status === '1' && data.geocodes && data.geocodes.length > 0) {
       var g = data.geocodes[0];
       var coords = g.location.split(',');
-      return { label:'', address: address, name: g.formatted_address || address, lng: parseFloat(coords[0]), lat: parseFloat(coords[1]) };
+      return {
+        label: '',
+        address: address,
+        name: g.formatted_address || address,
+        lng: parseFloat(coords[0]),
+        lat: parseFloat(coords[1])
+      };
     }
   } catch(e) {}
   return null;
@@ -791,59 +826,62 @@ async function transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey) {
   return null;
 }
 
-// ========== BEST DIRECTION (try all 4, pick fastest) ==========
-async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey) {
+// ========== BEST DIRECTION (try all 4, pick fastest; or use specified mode) ==========
+async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey, modePref) {
+  modePref = modePref || 'auto';
+
+  if (modePref === 'walking') {
+    var w = await walkingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+    if (!w) return null;
+    return { mode:'walking', mode_label:'步行', total_minutes: w.duration/60, transit_minutes:0, walking_minutes: w.duration/60, walking_distance: w.distance, lines:[], duration_seconds: w.duration };
+  }
+  if (modePref === 'bicycling') {
+    var b = await bicyclingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+    if (!b) return null;
+    return { mode:'bicycling', mode_label:'骑行', total_minutes: b.duration/60, transit_minutes:0, walking_minutes: b.duration/60, walking_distance: b.distance, lines:[], duration_seconds: b.duration };
+  }
+  if (modePref === 'driving') {
+    var d = await drivingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+    if (!d) return null;
+    return { mode:'driving', mode_label:'开车', total_minutes: d.duration/60, transit_minutes:0, walking_minutes: d.duration/60, walking_distance: d.distance, lines:[], duration_seconds: d.duration };
+  }
+  if (modePref === 'transit') {
+    var t = await transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey);
+    if (!t) return null;
+    return { mode:'transit', mode_label:'公共交通', total_minutes: t.total_duration/60, transit_minutes: t.transit_time/60, walking_minutes: t.walking_time/60, walking_distance: t.walking_distance, lines:(t.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations};}), duration_seconds: t.total_duration };
+  }
+
+  // auto: try all 4, pick fastest
   var results = [];
-
-  var w = await walkingDirection(fromLng, fromLat, toLng, toLat, apiKey);
-  if (w) results.push(w);
+  var w2 = await walkingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+  if (w2) results.push(w2);
   await sleep(250);
 
-  var b = await bicyclingDirection(fromLng, fromLat, toLng, toLat, apiKey);
-  if (b) results.push(b);
+  var b2 = await bicyclingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+  if (b2) results.push(b2);
   await sleep(250);
 
-  var d = await drivingDirection(fromLng, fromLat, toLng, toLat, apiKey);
-  if (d) results.push(d);
+  var d2 = await drivingDirection(fromLng, fromLat, toLng, toLat, apiKey);
+  if (d2) results.push(d2);
   await sleep(300);
 
-  var t = await transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey);
-  if (t) results.push(t);
+  var t2 = await transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey);
+  if (t2) results.push(t2);
 
   if (results.length === 0) return null;
-
-  // Sort by duration, pick fastest
-  results.sort(function(a, b) { return a.duration - b.duration; });
+  results.sort(function(a,b){ return a.duration - b.duration; });
   var fastest = results[0];
 
   if (fastest.mode === 'transit') {
-    return {
-      mode: 'transit',
-      mode_label: '公共交通',
-      total_minutes: fastest.total_duration / 60,
-      transit_minutes: fastest.transit_time / 60,
-      walking_minutes: fastest.walking_time / 60,
-      walking_distance: fastest.walking_distance,
-      lines: (fastest.transit_detail || []).map(function(s) { return { name: s.name, stations: s.stations }; }),
-      duration_seconds: fastest.total_duration
-    };
+    return { mode:'transit', mode_label:'公共交通', total_minutes: fastest.total_duration/60, transit_minutes: fastest.transit_time/60, walking_minutes: fastest.walking_time/60, walking_distance: fastest.walking_distance, lines:(fastest.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations};}), duration_seconds: fastest.total_duration };
   } else {
-    return {
-      mode: fastest.mode,
-      mode_label: fastest.mode_label,
-      total_minutes: fastest.duration / 60,
-      transit_minutes: 0,
-      walking_minutes: fastest.duration / 60,
-      walking_distance: fastest.distance,
-      lines: [],
-      duration_seconds: fastest.duration
-    };
+    return { mode: fastest.mode, mode_label: fastest.mode_label, total_minutes: fastest.duration/60, transit_minutes:0, walking_minutes: fastest.duration/60, walking_distance: fastest.distance, lines:[], duration_seconds: fastest.duration };
   }
 }
 
 // ========== COMPUTE ==========
 async function compute(persons, keyword, city, maxVenues, apiKey) {
-  // Step 1: collect venues from all persons
+  // Step1: collect venues from all persons
   var venueMap = {};
   for (var pi = 0; pi < persons.length; pi++) {
     var p = persons[pi];
@@ -865,7 +903,7 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
 
   if (venueList.length === 0) throw new Error('未找到任何"' + keyword + '"，请尝试其他关键词');
 
-  // Step 2: compute commute for each person to each venue
+  // Step2: compute commute for each person to each venue
   var allResults = [];
   for (var vi = 0; vi < venueList.length; vi++) {
     var v = venueList[vi];
@@ -877,7 +915,8 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
 
     for (var pi = 0; pi < persons.length; pi++) {
       var p = persons[pi];
-      var result = await bestDirection(p.lng, p.lat, v.lng, v.lat, city, apiKey);
+      var modePref = p.mode_preference || 'auto';
+      var result = await bestDirection(p.lng, p.lat, v.lng, v.lat, city, apiKey, modePref);
       await sleep(100);
 
       if (result) {
@@ -905,7 +944,7 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
     if (!hasError) {
       var times = venueCommutes.persons.map(function(p) { return p.total_minutes; });
       var maxTime = Math.max.apply(null, times);
-      var totalTime = times.reduce(function(a, b) { return a + b; }, 0);
+      var totalTime = times.reduce(function(a, b) { return a + b; },0);
       var avgTime = totalTime / times.length;
       allResults.push({ max_time: maxTime, total_time: totalTime, avg_time: avgTime, venue: v, persons: venueCommutes.persons });
     }
@@ -1061,29 +1100,37 @@ async function startCompute() {
   try {
     // Step 1: Geocode locations that weren't selected from suggestions
     var persons = [];
+    var unmatched = [];
     for (var i = 0; i < locations.length; i++) {
       var loc = locations[i];
       if (loc.geocoded && loc.lng && loc.lat) {
-        // Already geocoded from autocomplete selection
+        // Already geocoded from autocomplete selection — most accurate
         persons.push({
           label: loc.label,
           address: loc.address,
           name: loc.address,
           lng: loc.lng,
-          lat: loc.lat
+          lat: loc.lat,
+          mode_preference: loc.mode_preference || 'auto'
         });
       } else {
-        // Need to geocode
+        // Fallback: geocode with "city+address" for better accuracy
         document.getElementById('loadingStep').textContent = '正在编码第 ' + (i+1) + '/' + locations.length + ' 个地址...';
         var geo = await geocode(loc.address, city, apiKey);
         if (geo) {
           geo.label = loc.label;
+          geo.mode_preference = loc.mode_preference || 'auto';
           persons.push(geo);
+        } else {
+          unmatched.push(loc.address);
         }
         await sleep(200);
       }
     }
-    if (persons.length < 2) throw new Error('需要至少 2 个有效地址，请确认地址是否正确（可在输入时从下拉列表选择精确地址）');
+    if (unmatched.length > 0) {
+      throw new Error('以下地址无法识别：「' + unmatched.join('、') + '」\n请在输入时从下拉列表中选择精确地址，或检查城市选择是否正确。');
+    }
+    if (persons.length < 2) throw new Error('需要至少 2 个有效地址');
 
     // Step 2: Compute
     var result = await compute(persons, keyword, city, maxVenues, apiKey);
