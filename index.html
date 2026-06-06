@@ -7,6 +7,8 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>汇合点推荐 · MeetFinder</title>
+<!-- AMap JS API 2.0 -->
+<script src="https://webapi.amap.com/maps?v=2.0&key=62e28bb100f16a04287c272f1ca63816"></script>
 <style>
 :root {
   --bg-primary: #0a0a0f;
@@ -121,7 +123,7 @@ body {
 .btn-remove:hover { background: rgba(239,68,68,0.3); }
 
 /* Autocomplete */
-.autocomplete-wrapper { position:relative; flex:1; min-width:0; }
+.autocomplete-wrapper { position:relative; flex:1; }
 .autocomplete-list {
   position:absolute; top:100%; left:0; right:0; z-index:100;
   background:var(--bg-card); border:1px solid var(--border);
@@ -138,7 +140,7 @@ body {
 .autocomplete-item:hover { background:var(--bg-card-hover); }
 .autocomplete-item .ac-name { color:var(--text-primary); font-weight:500; }
 .autocomplete-item .ac-addr { color:var(--text-muted); font-size:12px; margin-left:8px; }
-.autocomplete-item .ac-district { color:var(--accent-light); font-size:11px; margin-left:6px; }
+.autocomplete-item .ac-district { color:var(--accent-light); font-size:11px; }
 
 /* City selector */
 .city-select {
@@ -280,6 +282,8 @@ body {
 }
 .chip-walk { background:rgba(34,197,94,0.12); color:#4ade80; }
 .chip-transit { background:rgba(99,102,241,0.12); color:var(--accent-light); }
+.chip-subway { background:rgba(234,179,8,0.15); color:#fbbf24; }
+.chip-bus { background:rgba(99,102,241,0.12); color:var(--accent-light); }
 .chip-bike { background:rgba(34,197,94,0.15); color:#4ade80; }
 .chip-car { background:rgba(6,182,212,0.15); color:#22d3ee; }
 .route-arrow { color:var(--text-muted); font-size:11px; }
@@ -297,6 +301,26 @@ body {
 .rank-1 { background:rgba(245,158,11,0.2); color:var(--warning); }
 .rank-other { background:var(--bg-input); color:var(--text-muted); }
 .rank-name { max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ========== MAP ========== */
+.map-card {
+  background: var(--bg-card);
+  border:1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.map-card .card-title {
+  padding: 18px 24px 0;
+}
+#resultMap {
+  width: 100%;
+  height: 480px;
+  background: #1a1a26;
+}
+/* AMap dark theme overrides */
+#resultMap .amap-logo, #resultMap .amap-copyright { display: none !important; }
 
 /* Footer */
 .footer { text-align:center; padding:32px 0 12px; color:var(--text-muted); font-size:12px; }
@@ -337,6 +361,7 @@ body {
   .commute-route { flex-basis:100%; order:4; }
   .stats-row { grid-template-columns:repeat(2,1fr); }
   .form-row { flex-direction:column; }
+  #resultMap { height: 350px; }
 }
 </style>
 </head>
@@ -349,7 +374,7 @@ body {
   <div class="header">
     <div class="header-icon">📍</div>
     <h1>汇合点推荐</h1>
-    <p>输入多地出发地，自动推荐最优汇合场馆 · 步行/骑行/开车/公交 自动选最快</p>
+    <p>输入多地出发地，自动推荐最优汇合场馆 · 步行/骑行/开车/公交+地铁 自动选最快</p>
   </div>
 
   <!-- Settings Card -->
@@ -428,7 +453,7 @@ body {
     <div id="locationList"></div>
     <div class="action-bar">
       <button class="btn btn-secondary" onclick="addLocation()">＋ 添加出发地</button>
-      <div style="flex:1;"></div>
+      <div style="flex:1"></div>
       <button class="btn btn-primary" id="computeBtn" onclick="startCompute()">📍 开始计算</button>
     </div>
   </div>
@@ -454,6 +479,12 @@ body {
 
     <!-- Stats -->
     <div class="stats-row" id="statsRow"></div>
+
+    <!-- MAP -->
+    <div class="map-card">
+      <div class="card-title">🗺️ 地图总览</div>
+      <div id="resultMap"></div>
+    </div>
 
     <!-- Commute -->
     <div class="card">
@@ -481,7 +512,7 @@ body {
 
   <div class="footer">
     MeetFinder · 纯前端版 · 数据来自高德地图 API<br>
-    步行 / 骑行 / 开车 / 公交，自动选择最快交通方式
+    步行 / 骑行 / 开车 / 公交+地铁，自动选择最快交通方式
   </div>
 </div>
 
@@ -490,11 +521,173 @@ body {
 
 <script>
 var PERSON_COLORS = ['a','b','c','d','e','f','g','h'];
+var PERSON_COLOR_HEX = ['#6366f1','#06b6d4','#22c55e','#f59e0b','#ec4899','#8b5cf6','#14b8a6','#f97316'];
 var LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 var locationCount = 0;
-// Track selected geocode results per input
 var selectedGeo = {};
 
+// ========== AMap instance ==========
+var map = null;
+var mapMarkers = [];
+var mapPolylines = [];
+
+function initMap() {
+  if (map) return;
+  map = new AMap.Map('resultMap', {
+    zoom: 12,
+    center: [120.15, 30.28],
+    mapStyle: 'amap://styles/dark',
+    resizeEnable: true
+  });
+}
+
+function clearMapOverlays() {
+  for (var i = 0; i < mapMarkers.length; i++) map.remove(mapMarkers[i]);
+  for (var i = 0; i < mapPolylines.length; i++) map.remove(mapPolylines[i]);
+  mapMarkers = [];
+  mapPolylines = [];
+}
+
+function renderMap(data) {
+  initMap();
+  clearMapOverlays();
+
+  var best = data.best;
+  var bounds = [];
+
+  // --- 1. Draw candidate venues (top 5, gray markers) ---
+  var topVenues = data.venues_sorted.slice(0, 5);
+  for (var i = 0; i < topVenues.length; i++) {
+    var v = topVenues[i].venue;
+    if (!v.lng || !v.lat) continue;
+    var isBest = (i === 0);
+
+    // Marker content
+    var markerContent;
+    if (isBest) {
+      // Best venue: gold star with pulse
+      markerContent = '<div style="position:relative;">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:rgba(245,158,11,0.25);position:absolute;top:-8px;left:-8px;animation:pulse 2s infinite;"></div>' +
+        '<div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 2px 12px rgba(245,158,11,0.6);">🏆</div>' +
+        '</div>';
+    } else {
+      // Other venues: small gray dot with rank number
+      markerContent = '<div style="width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#aaa;">' + (i+1) + '</div>';
+    }
+
+    var marker = new AMap.Marker({
+      position: [v.lng, v.lat],
+      content: markerContent,
+      offset: isBest ? new AMap.Pixel(-12, -12) : new AMap.Pixel(-11, -11),
+      zIndex: isBest ? 200 : 100,
+      title: v.name
+    });
+    mapMarkers.push(marker);
+
+    // InfoWindow for best venue
+    if (isBest) {
+      var infoContent = '<div style="padding:8px 12px;font-size:13px;color:#333;max-width:220px;">' +
+        '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">🏆 ' + v.name + '</div>' +
+        '<div style="color:#666;font-size:12px;">' + v.address + '</div>' +
+        (v.tel ? '<div style="color:#22c55e;font-size:12px;margin-top:2px;">📞 ' + v.tel + '</div>' : '') +
+        '</div>';
+      marker.infoWindow = new AMap.InfoWindow({
+        content: infoContent,
+        offset: new AMap.Pixel(0, -30)
+      });
+      (function(m) {
+        m.on('click', function() {
+          m.infoWindow.open(map, m.getPosition());
+        });
+      })(marker);
+    }
+
+    bounds.push([v.lng, v.lat]);
+  }
+
+  // --- 2. Draw person origin markers ---
+  var persons = data.persons;
+  for (var i = 0; i < persons.length; i++) {
+    var p = persons[i];
+    if (!p.lng || !p.lat) continue;
+
+    var colorIdx = LABELS.indexOf(p.label) % PERSON_COLOR_HEX.length;
+    var color = PERSON_COLOR_HEX[colorIdx] || '#6366f1';
+
+    var personContent = '<div style="width:30px;height:30px;border-radius:50%;background:' + color + ';border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.4);">' + p.label + '</div>';
+
+    var pMarker = new AMap.Marker({
+      position: [p.lng, p.lat],
+      content: personContent,
+      offset: new AMap.Pixel(-15, -15),
+      zIndex: 150,
+      title: p.label + ' ' + (p.name || p.address)
+    });
+    mapMarkers.push(pMarker);
+    bounds.push([p.lng, p.lat]);
+  }
+
+  // --- 3. Draw lines from each person to best venue ---
+  if (best && best.venue) {
+    var bestVenue = best.venue;
+    for (var i = 0; i < best.persons.length; i++) {
+      var cp = best.persons[i];
+      // Find the person's coordinates from data.persons
+      var pCoords = null;
+      for (var j = 0; j < persons.length; j++) {
+        if (persons[j].label === cp.label) {
+          pCoords = persons[j];
+          break;
+        }
+      }
+      if (!pCoords || !pCoords.lng || !pCoords.lat) continue;
+
+      var colorIdx = LABELS.indexOf(cp.label) % PERSON_COLOR_HEX.length;
+      var lineColor = PERSON_COLOR_HEX[colorIdx] || '#6366f1';
+
+      // Dashed line
+      var polyline = new AMap.Polyline({
+        path: [[pCoords.lng, pCoords.lat], [bestVenue.lng, bestVenue.lat]],
+        strokeColor: lineColor,
+        strokeWeight: 2.5,
+        strokeOpacity: 0.7,
+        strokeStyle: 'dashed',
+        strokeDasharray: [8, 6],
+        zIndex: 50
+      });
+      mapPolylines.push(polyline);
+
+      // Distance label at midpoint
+      var midLng = (pCoords.lng + bestVenue.lng) / 2;
+      var midLat = (pCoords.lat + bestVenue.lat) / 2;
+      var distKm = (cp.walking_distance / 1000).toFixed(1);
+      var timeMin = Math.round(cp.total_minutes);
+
+      var distContent = '<div style="background:rgba(26,26,38,0.92);border:1px solid ' + lineColor + ';border-radius:6px;padding:3px 8px;font-size:11px;font-weight:600;color:' + lineColor + ';white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.5);">' +
+        timeMin + '分 · ' + distKm + 'km' +
+        '</div>';
+
+      var distMarker = new AMap.Marker({
+        position: [midLng, midLat],
+        content: distContent,
+        offset: new AMap.Pixel(-30, -10),
+        zIndex: 180
+      });
+      mapMarkers.push(distMarker);
+    }
+  }
+
+  map.add(mapMarkers);
+  map.add(mapPolylines);
+
+  // Fit view — use setFitView to auto-fit all overlays
+  var allOverlays = mapMarkers.concat(mapPolylines);
+  if (allOverlays.length > 0) {
+    map.setFitView(allOverlays, false, [60, 60, 60, 60], 15);
+  }
+}
+
+// ========== INPUT / UI ==========
 function addLocation(addr, modePref) {
   addr = addr || '';
   modePref = modePref || 'auto';
@@ -507,12 +700,12 @@ function addLocation(addr, modePref) {
   row.id = 'loc-' + idx;
   row.innerHTML =
     '<div class="input-label person-' + colorClass + '">' + label + '</div>' +
-    '<select class="mode-select" id="mode-' + idx + '" title="优先交通方式，选自动则择优">' +
+    '<select class="mode-select" id="mode-' + idx + '" title="优先交通方式（公交含地铁），选自动则择优">' +
       '<option value="auto"' + (modePref === 'auto' ? ' selected' : '') + '>自动</option>' +
       '<option value="walking"' + (modePref === 'walking' ? ' selected' : '') + '>步行</option>' +
       '<option value="bicycling"' + (modePref === 'bicycling' ? ' selected' : '') + '>骑行</option>' +
       '<option value="driving"' + (modePref === 'driving' ? ' selected' : '') + '>开车</option>' +
-      '<option value="transit"' + (modePref === 'transit' ? ' selected' : '') + '>公交</option>' +
+      '<option value="transit"' + (modePref === 'transit' ? ' selected' : '') + '>公交/地铁</option>' +
     '</select>' +
     '<div class="autocomplete-wrapper" style="flex:1;min-width:0;">' +
       '<input class="input-field" id="addr-' + idx + '" value="' + (addr || '') + '" placeholder="输入地址，如：杭州市城西银泰城" autocomplete="off">' +
@@ -529,7 +722,7 @@ function addLocation(addr, modePref) {
 
   input.addEventListener('input', function() {
     clearTimeout(debounceTimer);
-    delete selectedGeo[idx]; // clear selection when user types
+    delete selectedGeo[idx];
     var val = input.value.trim();
     if (val.length < 2) { acList.classList.remove('active'); return; }
     debounceTimer = setTimeout(function() {
@@ -543,7 +736,6 @@ function addLocation(addr, modePref) {
     }
   });
 
-  // Close dropdown on outside click
   document.addEventListener('click', function(e) {
     if (!row.contains(e.target)) {
       acList.classList.remove('active');
@@ -600,10 +792,10 @@ function updateProgress(pct) {
 
 function showToast(msg, isError) {
   var el = document.getElementById('toast');
-  el.innerHTML = msg.replace(/\n/g, '<br>');
+  el.innerHTML = msg;
   el.className = 'toast' + (isError ? ' error' : '');
   requestAnimationFrame(function() { el.classList.add('show'); });
-  setTimeout(function() { el.classList.remove('show'); }, 4000);
+  setTimeout(function() { el.classList.remove('show'); }, 3500);
 }
 
 function sleep(ms) {
@@ -638,7 +830,7 @@ function amapRequest(endpoint, params, apiKey) {
   });
 }
 
-// ========== INPUT SUGGESTION (高德输入提示) ==========
+// ========== INPUT SUGGESTION ==========
 async function searchSuggestion(keywords, idx) {
   var apiKey = (document.getElementById('apiKey').value || '').trim();
   if (!apiKey) return;
@@ -659,21 +851,19 @@ async function searchSuggestion(keywords, idx) {
       var count = 0;
       for (var i = 0; i < data.tips.length && count < 6; i++) {
         var tip = data.tips[i];
-        if (!tip.location) continue; // skip tips without coordinates
+        if (!tip.location) continue;
         var c = tip.location.split(',');
         var item = document.createElement('div');
         item.className = 'autocomplete-item';
-        var districtText = (tip.district || '');
-        var addrText = (tip.address || '');
         item.innerHTML =
           '<span class="ac-name">' + (tip.name || '') + '</span>' +
-          '<span class="ac-district">' + districtText + '</span>' +
-          '<span class="ac-addr">' + addrText + '</span>';
+          '<span class="ac-district">' + (tip.adcode ? (tip.district || '') : '') + '</span>' +
+          '<span class="ac-addr">' + (tip.address || '') + '</span>';
         item.setAttribute('data-idx', idx);
         item.setAttribute('data-lng', c[0]);
         item.setAttribute('data-lat', c[1]);
         item.setAttribute('data-name', tip.name);
-        item.setAttribute('data-fullname', districtText + addrText);
+        item.setAttribute('data-fullname', tip.district + tip.address);
 
         item.addEventListener('click', (function(acEl, inputId, listId, geoIdx) {
           return function(e) {
@@ -702,23 +892,15 @@ async function searchSuggestion(keywords, idx) {
   }
 }
 
-// ========== GEOCODE (fallback when user didn't select from suggestions) ==========
-// city 参数用于限定城市范围，减少同名地点歧义
+// ========== GEOCODE ==========
 async function geocode(address, city, apiKey) {
   try {
-    // 优先用 "城市+地址" 一起搜，大幅提高精确度
     var searchAddr = city ? city + address : address;
     var data = await amapRequest('geocode/geo', { address: searchAddr, city: city }, apiKey);
     if (data.status === '1' && data.geocodes && data.geocodes.length > 0) {
       var g = data.geocodes[0];
       var coords = g.location.split(',');
-      return {
-        label: '',
-        address: address,
-        name: g.formatted_address || address,
-        lng: parseFloat(coords[0]),
-        lat: parseFloat(coords[1])
-      };
+      return { label:'', address: address, name: g.formatted_address || address, lng: parseFloat(coords[0]), lat: parseFloat(coords[1]) };
     }
   } catch(e) {}
   return null;
@@ -733,8 +915,8 @@ async function placeAround(lng, lat, keyword, apiKey, limit, city) {
       types: '',
       city: city,
       citylimit: 'true',
-      radius: 5000,
-      offset: limit || 15,
+      radius: 15000,
+      offset: limit || 25,
       page: 1
     }, apiKey);
     if (data.status === '1' && data.pois) {
@@ -747,7 +929,7 @@ async function placeAround(lng, lat, keyword, apiKey, limit, city) {
   return [];
 }
 
-// ========== DIRECTION: WALKING ==========
+// ========== DIRECTIONS ==========
 async function walkingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   try {
     var data = await amapRequest('direction/walking', {
@@ -761,7 +943,6 @@ async function walkingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   return null;
 }
 
-// ========== DIRECTION: BICYCLING ==========
 async function bicyclingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   try {
     var data = await amapRequest('direction/bicycling', {
@@ -775,7 +956,6 @@ async function bicyclingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   return null;
 }
 
-// ========== DIRECTION: DRIVING ==========
 async function drivingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   try {
     var data = await amapRequest('direction/driving', {
@@ -790,7 +970,6 @@ async function drivingDirection(fromLng, fromLat, toLng, toLat, apiKey) {
   return null;
 }
 
-// ========== DIRECTION: TRANSIT ==========
 async function transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey) {
   try {
     var data = await amapRequest('direction/transit/integrated', {
@@ -808,6 +987,8 @@ async function transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey) {
       var walkTime = 0;
       var segments = t.segments || [];
       var transitSegments = [];
+      var hasSubway = false;
+      var hasBus = false;
       for (var si = 0; si < segments.length; si++) {
         var wi = segments[si].walking;
         if (wi && wi.duration) walkTime += parseInt(wi.duration) || 0;
@@ -816,17 +997,23 @@ async function transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey) {
           var bl = bi.buslines[0];
           var bn = bl.name || '';
           if (bn.indexOf('(') > 0) bn = bn.split('(')[0];
-          transitSegments.push({ name: bn, stations: (bl.via_stops || []).length });
+          var isSubway = /地铁|轻轨|磁浮|城际|APM/i.test(bn);
+          if (isSubway) hasSubway = true; else hasBus = true;
+          transitSegments.push({ name: bn, stations: (bl.via_stops || []).length, is_subway: isSubway });
         }
       }
       var transitTime = totalDuration - walkTime;
-      return { mode:'transit', mode_label:'公共交通', total_duration: totalDuration, transit_time: transitTime, walking_time: walkTime, walking_distance: walkingDistance, transit_detail: transitSegments };
+      var modeLabel = '公共交通';
+      if (hasSubway && !hasBus) modeLabel = '地铁';
+      else if (hasSubway && hasBus) modeLabel = '地铁+公交';
+      else if (hasBus && !hasSubway) modeLabel = '公交';
+      return { mode:'transit', mode_label: modeLabel, total_duration: totalDuration, transit_time: transitTime, walking_time: walkTime, walking_distance: walkingDistance, transit_detail: transitSegments };
     }
   } catch(e) {}
   return null;
 }
 
-// ========== BEST DIRECTION (try all 4, pick fastest; or use specified mode) ==========
+// ========== BEST DIRECTION ==========
 async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey, modePref) {
   modePref = modePref || 'auto';
 
@@ -848,7 +1035,7 @@ async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey, modeP
   if (modePref === 'transit') {
     var t = await transitDirection(fromLng, fromLat, toLng, toLat, city, apiKey);
     if (!t) return null;
-    return { mode:'transit', mode_label:'公共交通', total_minutes: t.total_duration/60, transit_minutes: t.transit_time/60, walking_minutes: t.walking_time/60, walking_distance: t.walking_distance, lines:(t.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations};}), duration_seconds: t.total_duration };
+    return { mode:'transit', mode_label: t.mode_label, total_minutes: t.total_duration/60, transit_minutes: t.transit_time/60, walking_minutes: t.walking_time/60, walking_distance: t.walking_distance, lines:(t.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations,is_subway:s.is_subway};}), duration_seconds: t.total_duration };
   }
 
   // auto: try all 4, pick fastest
@@ -873,7 +1060,7 @@ async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey, modeP
   var fastest = results[0];
 
   if (fastest.mode === 'transit') {
-    return { mode:'transit', mode_label:'公共交通', total_minutes: fastest.total_duration/60, transit_minutes: fastest.transit_time/60, walking_minutes: fastest.walking_time/60, walking_distance: fastest.walking_distance, lines:(fastest.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations};}), duration_seconds: fastest.total_duration };
+    return { mode:'transit', mode_label: fastest.mode_label, total_minutes: fastest.total_duration/60, transit_minutes: fastest.transit_time/60, walking_minutes: fastest.walking_time/60, walking_distance: fastest.walking_distance, lines:(fastest.transit_detail||[]).map(function(s){return{name:s.name,stations:s.stations,is_subway:s.is_subway};}), duration_seconds: fastest.total_duration };
   } else {
     return { mode: fastest.mode, mode_label: fastest.mode_label, total_minutes: fastest.duration/60, transit_minutes:0, walking_minutes: fastest.duration/60, walking_distance: fastest.distance, lines:[], duration_seconds: fastest.duration };
   }
@@ -881,7 +1068,6 @@ async function bestDirection(fromLng, fromLat, toLng, toLat, city, apiKey, modeP
 
 // ========== COMPUTE ==========
 async function compute(persons, keyword, city, maxVenues, apiKey) {
-  // Step1: collect venues from all persons
   var venueMap = {};
   for (var pi = 0; pi < persons.length; pi++) {
     var p = persons[pi];
@@ -903,7 +1089,7 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
 
   if (venueList.length === 0) throw new Error('未找到任何"' + keyword + '"，请尝试其他关键词');
 
-  // Step2: compute commute for each person to each venue
+  // Step 2: compute commute
   var allResults = [];
   for (var vi = 0; vi < venueList.length; vi++) {
     var v = venueList[vi];
@@ -941,16 +1127,18 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
       }
     }
 
-    if (!hasError) {
-      var times = venueCommutes.persons.map(function(p) { return p.total_minutes; });
-      var maxTime = Math.max.apply(null, times);
-      var totalTime = times.reduce(function(a, b) { return a + b; },0);
-      var avgTime = totalTime / times.length;
-      allResults.push({ max_time: maxTime, total_time: totalTime, avg_time: avgTime, venue: v, persons: venueCommutes.persons });
-    }
+    // 仍然保留部分失败的场馆，排到后面即可
+    var times = venueCommutes.persons.map(function(p) { return p.total_minutes; });
+    var maxTime = Math.max.apply(null, times);
+    var totalTime = times.reduce(function(a, b) { return a + b; }, 0);
+    var avgTime = totalTime / times.length;
+    allResults.push({ max_time: maxTime, total_time: totalTime, avg_time: avgTime, venue: v, persons: venueCommutes.persons, has_error: hasError });
   }
 
   allResults.sort(function(a, b) {
+    // 有错误的排后面
+    if (a.has_error && !b.has_error) return 1;
+    if (!a.has_error && b.has_error) return -1;
     if (a.max_time !== b.max_time) return a.max_time - b.max_time;
     return a.total_time - b.total_time;
   });
@@ -963,7 +1151,7 @@ async function compute(persons, keyword, city, maxVenues, apiKey) {
 
   return {
     center: { lng: centerLng, lat: centerLat },
-    persons: persons.map(function(p) { return { label: p.label, address: p.address, name: p.name }; }),
+    persons: persons.map(function(p) { return { label: p.label, address: p.address, name: p.name, lng: p.lng, lat: p.lat }; }),
     venues_sorted: allResults,
     best: allResults.length > 0 ? allResults[0] : null
   };
@@ -976,7 +1164,10 @@ function formatLines(lines) {
     if (i > 0) html += '<span class="route-arrow">&#8594;</span>';
     var name = (l.name || '').length > 12 ? (l.name || '').substring(0, 12) + '...' : (l.name || '');
     var stationText = l.stations > 0 ? '(' + l.stations + '站)' : '';
-    html += '<span class="route-chip chip-transit">' + name + stationText + '</span>';
+    var isSubway = l.is_subway;
+    var chipClass = isSubway ? 'chip-subway' : 'chip-bus';
+    var icon = isSubway ? '🚇' : '🚌';
+    html += '<span class="route-chip ' + chipClass + '">' + icon + ' ' + name + stationText + '</span>';
   });
   return html;
 }
@@ -1076,6 +1267,10 @@ function renderResults(data) {
   });
 
   document.getElementById('resultsSection').classList.add('active');
+
+  // Render map
+  renderMap(data);
+
   document.getElementById('resultsSection').scrollIntoView({ behavior:'smooth', block:'start' });
 }
 
@@ -1104,7 +1299,6 @@ async function startCompute() {
     for (var i = 0; i < locations.length; i++) {
       var loc = locations[i];
       if (loc.geocoded && loc.lng && loc.lat) {
-        // Already geocoded from autocomplete selection — most accurate
         persons.push({
           label: loc.label,
           address: loc.address,
@@ -1114,7 +1308,6 @@ async function startCompute() {
           mode_preference: loc.mode_preference || 'auto'
         });
       } else {
-        // Fallback: geocode with "city+address" for better accuracy
         document.getElementById('loadingStep').textContent = '正在编码第 ' + (i+1) + '/' + locations.length + ' 个地址...';
         var geo = await geocode(loc.address, city, apiKey);
         if (geo) {
@@ -1179,5 +1372,14 @@ addLocation();
 addLocation();
 addLocation();
 </script>
+
+<!-- Pulse animation for best marker -->
+<style>
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.6); opacity: 0.2; }
+  100% { transform: scale(1); opacity: 0.6; }
+}
+</style>
 </body>
 </html>
