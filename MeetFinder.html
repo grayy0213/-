@@ -7,8 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>汇合点推荐 · MeetFinder</title>
-<!-- AMap JS API 2.0 -->
-<script src="https://webapi.amap.com/maps?v=2.0&key=62e28bb100f16a04287c272f1ca63816"></script>
+<!-- AMap JS API 2.0 — 动态加载，用户填入 Key 后初始化 -->
 <style>
 :root {
   --bg-primary: #0a0a0f;
@@ -383,7 +382,7 @@ body {
 
     <div class="api-key-group">
       <label>高德 Web API Key（必填）</label>
-      <input class="api-key-input" id="apiKey" type="text" placeholder="请输入你的高德 Web API Key" value="62e28bb100f16a04287c272f1ca63816">
+      <input class="api-key-input" id="apiKey" type="text" placeholder="请输入你的高德 Web API Key（https://lbs.amap.com 免费申请）">
     </div>
 
     <div class="form-row">
@@ -525,6 +524,30 @@ var PERSON_COLOR_HEX = ['#6366f1','#06b6d4','#22c55e','#f59e0b','#ec4899','#8b5c
 var LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 var locationCount = 0;
 var selectedGeo = {};
+
+// ========== API Key & AMap SDK 动态加载 ==========
+var amapLoaded = false;
+
+// 页面加载时恢复上次保存的 Key
+(function() {
+  var saved = localStorage.getItem('meetfinder_amap_key');
+  if (saved) document.getElementById('apiKey').value = saved;
+})();
+
+function saveAndLoadAmap() {
+  var apiKey = (document.getElementById('apiKey').value || '').trim();
+  if (!apiKey) { showToast('请先输入高德 Web API Key', true); return false; }
+  if (!/^[0-9a-f]{32}$/i.test(apiKey)) { showToast('Key 格式不正确，应为32位十六进制字符串', true); return false; }
+  localStorage.setItem('meetfinder_amap_key', apiKey);
+  if (!amapLoaded) {
+    var s = document.createElement('script');
+    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + apiKey;
+    s.onload = function() { amapLoaded = true; };
+    document.head.appendChild(s);
+    amapLoaded = true; // 乐观标记，避免重复加载
+  }
+  return true;
+}
 
 // ========== AMap instance ==========
 var map = null;
@@ -1366,6 +1389,10 @@ function renderResults(data) {
 async function startCompute() {
   var apiKey = (document.getElementById('apiKey').value || '').trim();
   if (!apiKey) { showToast('请输入高德 Web API Key', true); return; }
+  if (!/^[0-9a-f]{32}$/i.test(apiKey)) { showToast('Key 格式不正确，应为32位十六进制字符串', true); return; }
+  // 保存 Key 并确保地图 SDK 已加载
+  localStorage.setItem('meetfinder_amap_key', apiKey);
+  saveAndLoadAmap();
 
   var locations = getLocations();
   if (locations.length < 2) { showToast('请至少输入 2 个出发地', true); return; }
